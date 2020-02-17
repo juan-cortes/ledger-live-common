@@ -29,6 +29,7 @@ import receive from "./commands/receive";
 import repl from "./commands/repl";
 import send from "./commands/send";
 import signMessage from "./commands/signMessage";
+import swaptest from "./commands/swaptest";
 import sync from "./commands/sync";
 import validRecipient from "./commands/validRecipient";
 import version from "./commands/version";
@@ -65,6 +66,7 @@ export default {
   repl,
   send,
   signMessage,
+  swaptest,
   sync,
   validRecipient,
   version,
