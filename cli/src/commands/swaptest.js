@@ -4,139 +4,194 @@ import { withDevice } from "@ledgerhq/live-common/lib/hw/deviceAccess";
 import Swap from "@ledgerhq/hw-app-swap";
 import { deviceOpt } from "../scan";
 import { from } from "rxjs";
+import { tap, first, map, reduce } from "rxjs/operators";
 import axios from "axios";
 import Btc from "@ledgerhq/hw-app-btc";
 import secp256k1 from "secp256k1";
-
-const segwit = {
-  address: "3NvD3m2qU5ByrQoswLoudnhLSQSTiumjZ5",
-  derivationPath: "49'/0'/0'/0/1",
-  xpub:
-    "xpub6CpMsDQknkbUTDRrpnrEp3GqmZV3BRZGWRV9pWm57mtW3pSNqSCDkaubRcNeUTkZdms5xg4qM7zJ4yxiPp67HPf56r9aeR55PdzA3Jek5yr"
-};
-
-const nativeSegwit = {
-  address: "bc1qnnv9ekuj5jk3c4fs5n0dsjd4l9qs6aslmh844q",
-  derivationPath: "84'/0'/0'/0/1",
-  xpub:
-    "xpub6D4xrRjfZp6bgGTfDHHjCFsS8E9LbXB3u4izJAwVxNSUoFugt4qd83zLywBrRooPzfWrcKLC1D7DipjECEEsRMCqhM2ptb5yKVmLgUnVGUs"
-};
-
-const address1 = [segwit, nativeSegwit][1]; // Change to whatever source
-const address2 = {
-  address: "LY65KK642pX7MtjgUdzegYgKsUskeCRe55",//"MQ7mSEeL8zcghLxVhKcgkH4BYmQ1vNgSH1",
-  derivationPath: " 49'/2'/0'/0/0",
-  xpub:
-    "Ltub2YQy7ASMeb7PYatDvv1PfvukhDemVRDwXUN55z5rfMTaDztZFrn9iScxB8ZmGzpJSaNxKhva2FXVYaUjpZHQfpxJXqvAfJ4V6VLBtweH5ys"
-};
+import { getAccountBridge } from "@ledgerhq/live-common/lib/bridge";
+import { setSupportedCurrencies } from "@ledgerhq/live-common/lib/data/cryptocurrencies";
+import { accountToReceiveSwap, accountToSendSwap } from "../poc/accounts";
 
 const swapTemplate = {
   provider: "Changelly",
   ip: "31.4.241.115",
-  amountFrom: 1,
+  amountFrom: 0.04,
   from: "BTC",
   to: "LTC",
   rateId: undefined,
-  address: address2.address,
-  refundAddress: address1.address,
+  address: accountToReceiveSwap.freshAddress,
+  refundAddress: accountToSendSwap.freshAddress,
   deviceTransactionId: undefined
 };
 
 const swapAPI = "https://swap.dev.aws.ledger.fr";
-const test = async transport => {
-  const swap: Swap = new Swap(transport);
-  console.log("------------------------------------");
-  console.log("      STARTING NEW SWAP TEST ");
-  console.log("------------------------------------");
+const test = async (transport, action) => {
+  if (action === "sign") {
+    const bridge = getAccountBridge(accountToSendSwap);
+    console.log("Sync the account");
+    const account = await bridge
+      .sync(accountToSendSwap, { paginationConfig: {} })
+      .pipe(reduce((a, f) => f(a), accountToSendSwap))
+      .toPromise();
 
-  console.log("⁍ Get swap version");
-  console.log(await swap.getVersion());
+    const transaction = {
+      family: "bitcoin",
+      amount: 4000000,
+      recipient: "3FT6xMgEWS2XHNMNsHv6sX4ujZo1K4dXiF",
+      feePerByte: "19",
+      networkInfo: {
+        family: "bitcoin",
+        feeItems: {
+          items: [
+            {
+              key: "0",
+              speed: "high",
+              feePerByte: "21"
+            },
+            {
+              key: "1",
+              speed: "standard",
+              feePerByte: "19"
+            },
+            {
+              key: "2",
+              speed: "low",
+              feePerByte: "19"
+            }
+          ],
+          defaultFeePerByte: "19"
+        }
+      },
+      useAllAmount: false
+    };
+    console.log("Attempt to sign transaction");
+    const signedTransaction = await bridge
+      .signOperation({
+        account,
+        transaction
+      })
+      .pipe(
+        tap(e => console.log(e)), // log events
+        first(e => e.type === "signed"),
+        map(e => e.signedOperation)
+      )
+      .toPromise();
+    console.log({ signedTransaction });
+  } else if (action === "generate") {
+    const swap: Swap = new Swap(transport);
+    console.log("------------------------------------");
+    console.log("      STARTING NEW SWAP TEST ");
+    console.log("------------------------------------");
 
-  console.log("⁍ Requesting a new swap transaction from swap app");
-  const swapTxId = await swap.startNewTransaction();
-  swapTemplate.deviceTransactionId = swapTxId;
+    console.log("⁍ Get swap version");
+    console.log(await swap.getVersion());
 
-  console.log("    Swap id:\t", swapTxId);
-  console.log("⁍ Requesting a fixed rate from backend");
-  const res = await axios.post(`${swapAPI}/rate/fixed`, [
-    {
-      from: swapTemplate.from,
-      to: swapTemplate.to,
-      amountFrom: swapTemplate.amountFrom
+    console.log("⁍ Requesting a new swap transaction from swap app");
+    const swapTxId = await swap.startNewTransaction();
+    swapTemplate.deviceTransactionId = swapTxId;
+
+    console.log("    Swap id:\t", swapTxId);
+    console.log("⁍ Requesting a fixed rate from backend");
+    const res = await axios.post(`${swapAPI}/rate/fixed`, [
+      {
+        from: swapTemplate.from,
+        to: swapTemplate.to,
+        amountFrom: swapTemplate.amountFrom
+      }
+    ]);
+    const fixedRate = res.data[0].FixedRate;
+    if (!fixedRate) {
+      console.log("⁍ Amount likely out of range or other error");
+      console.log(res.data);
+      return;
     }
-  ]);
-  const fixedRate = res.data[0].FixedRate;
-  if (!fixedRate) {
-    console.log("⁍ Amount likely out of range or other error");
-    console.log(res.data);
-    return;
+
+    swapTemplate.rateId = fixedRate.rateId;
+    console.log("    Rate id:\t", fixedRate.rateId);
+    console.log("    Rate:\t", {
+      amountFrom: fixedRate.amountFrom,
+      amountTo: fixedRate.amountTo
+    });
+
+    console.log("⁍ Setting partner on swap");
+    await swap.setPartnerKey(partnerSerializedNameAndPubKey);
+    console.log("⁍ Checking partner on swap");
+    await swap.checkPartner(DERSignatureOfPartnerNameAndPublicKey);
+
+    console.log("⁍ Sending the swap data to backend");
+    console.log(swapTemplate);
+    const res2 = await axios.post(`${swapAPI}/swap`, [swapTemplate]);
+    const swapResult = res2.data[0];
+    console.log(swapResult);
+    console.log(
+      "    Binary payload:\t",
+      swapResult.binaryPayload.replace(/(.{300})..+/, "$1…")
+    );
+    console.log("    Signature:\t\t", swapResult.signature);
+    console.log("    Valid til:\t\t", swapResult.payTill);
+    console.log("    Fee:\t\t", swapResult.apiFee);
+    console.log("    Extra fee:\t\t", swapResult.apiExtraFee);
+    console.log("    We pay to:\t\t", swapResult.payinAddress);
+    console.log("    We receive at:\t", swapResult.payoutAddress);
+
+    console.log("⁍ Pass payload to swap");
+    await swap.processTransaction(Buffer.from(swapResult.binaryPayload, "hex"));
+
+    console.log("⁍ Check transaction signature");
+    const goodSign = secp256k1.signatureExport(
+      Buffer.from(swapResult.signature, "hex")
+    );
+    await swap.checkTransactionSignature(goodSign);
+
+    const btc = new Btc(transport);
+    const ltcAddressParams = await btc.getSerializedAddressParameters(
+      accountToReceiveSwap.freshAddressPath,
+      "legacy"
+    );
+    console.log({ ltcAddressParams });
+    await swap.checkPayoutAddress(
+      LTCConfig,
+      LTCConfigSignature,
+      ltcAddressParams.addressParameters
+    );
+
+    const btcAddressParams = await btc.getSerializedAddressParameters(
+      accountToSendSwap.freshAddressPath,
+      "bech32"
+    );
+    await swap.checkRefundAddress(
+      BTCConfig,
+      BTCConfigSignature,
+      btcAddressParams.addressParameters
+    );
+    setSupportedCurrencies(["bitcoin"]);
+
+    const accountBridge = getAccountBridge(accountToSendSwap);
+
+    let tx = accountBridge.createTransaction(accountToSendSwap);
+    tx = accountBridge.updateTransaction(tx, {
+      amount: swapResult.amountExpectedFrom,
+      recipient: swapResult.payinAddress
+    });
+    tx = await accountBridge.prepareTransaction(accountToSendSwap, tx);
+    // FIXME we send decimals but swap wants satoshis
+    tx.amount = tx.amount * 10 ** 8;
+
+    console.log({ tx });
+    // TODO we can't sign with swap app, so log this tx to sign above
+    // by calling this command with -a sign
+  } else {
+    console.log("What are you doing?");
   }
-
-  swapTemplate.rateId = fixedRate.rateId;
-  console.log("    Rate id:\t", fixedRate.rateId);
-  console.log("    Rate:\t", {
-    amountFrom: fixedRate.amountFrom,
-    amountTo: fixedRate.amountTo
-  });
-
-  console.log("⁍ Setting partner on swap");
-  await swap.setPartnerKey(partnerSerializedNameAndPubKey);
-  console.log("⁍ Checking partner on swap");
-  await swap.checkPartner(DERSignatureOfPartnerNameAndPublicKey);
-
-  console.log("⁍ Sending the swap data to backend");
-  console.log(swapTemplate);
-  const res2 = await axios.post(`${swapAPI}/swap`, [swapTemplate]);
-  const swapResult = res2.data[0];
-  console.log(swapResult);
-  console.log(
-    "    Binary payload:\t",
-    swapResult.binaryPayload.replace(/(.{300})..+/, "$1…")
-  );
-  console.log("    Signature:\t\t", swapResult.signature);
-  console.log("    Valid til:\t\t", swapResult.payTill);
-  console.log("    Fee:\t\t", swapResult.apiFee);
-  console.log("    Extra fee:\t\t", swapResult.apiExtraFee);
-  console.log("    We pay to:\t\t", swapResult.payinAddress);
-  console.log("    We receive at:\t", swapResult.payoutAddress);
-
-  console.log("⁍ Pass payload to swap");
-  await swap.processTransaction(Buffer.from(swapResult.binaryPayload, "hex"));
-
-  console.log("⁍ Check transaction signature");
-  const goodSign = secp256k1.signatureExport(Buffer.from(swapResult.signature, "hex"));
-  await swap.checkTransactionSignature(goodSign);
-
-  const btc = new Btc(transport);
-  const ltcAddressParams = await btc.getSerializedAddressParameters(
-    address2.derivationPath,
-    "legacy"
-  );
-  console.log({ltcAddressParams})
-  await swap.checkPayoutAddress(
-    LTCConfig,
-    LTCConfigSignature,
-    ltcAddressParams.addressParameters
-  );
-
-  const btcAddressParams = await btc.getSerializedAddressParameters(
-    address1.derivationPath,
-    "bech32"
-  );
-  await swap.checkRefundAddress(
-    BTCConfig,
-    BTCConfigSignature,
-    btcAddressParams.addressParameters
-  );
-
-  // console.log("⁍ Check the status of the swap");
 };
 
-
 export default {
-  args: [deviceOpt],
-  job: ({ device }: $Shape<{ device: string }>) =>
-    withDevice(device || "")(transport => from(test(transport)))
+  args: [deviceOpt, { name: "action", alias: "a", type: String }],
+  job: ({
+    device,
+    action = "generate"
+  }: $Shape<{ device: string, action: string }>) =>
+    withDevice(device || "")(transport => from(test(transport, action)))
 };
 
 // Hardcoded stuff that needs to be provided
