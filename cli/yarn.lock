@@ -866,6 +866,14 @@
     ripemd160 "2"
     sha.js "2"
 
+"@ledgerhq/hw-app-btc@file:.yalc/@ledgerhq/hw-app-btc":
+  version "5.9.0-81f2c4cb"
+  dependencies:
+    "@ledgerhq/hw-transport" "^5.9.0"
+    bip32-path "^0.4.2"
+    ripemd160 "2"
+    sha.js "2"
+
 "@ledgerhq/hw-app-eth@5.9.0":
   version "5.9.0"
   resolved "https://registry.yarnpkg.com/@ledgerhq/hw-app-eth/-/hw-app-eth-5.9.0.tgz#502116e307036f8ab0705c2c89f556ef2967e51b"
