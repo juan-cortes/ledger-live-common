@@ -109,10 +109,6 @@ export const reducer = (state: State, action: Action): State => {
           currentProgressSubject: new Subject(),
         };
       } else if (event.type === "runSuccess") {
-        if (state.currentProgressSubject) {
-          state.currentProgressSubject.complete();
-        }
-
         let nextState;
         if (appOp.type === "install") {
           const app = state.apps.find((a) => a.name === appOp.name);

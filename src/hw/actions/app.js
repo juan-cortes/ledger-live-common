@@ -157,6 +157,7 @@ const reducer = (state: State, e: Event): State => {
         requestOpenApp: null,
         listingApps: false,
       };
+
     case "listing-apps":
       return {
         ...state,
